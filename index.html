@@ -1,48 +1,15 @@
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Pub Golf Leaderboard</title>
-  <style>
-    body { font-family: system-ui, Arial; margin: 24px; }
-    h1 { margin: 0 0 8px; }
-    .muted { color: #666; font-size: 14px; margin-bottom: 16px; }
-    table { border-collapse: collapse; width: 100%; max-width: 720px; }
-    th, td { padding: 10px 12px; border-bottom: 1px solid #eee; text-align: left; }
-    th { background: #fafafa; position: sticky; top: 0; }
-    .right { text-align: right; }
-  </style>
-</head>
-<body>
-  <h1>PiKapps Pub Golf Leaderboard</h1>
-  <div class="muted">Auto-updates from Google Sheets every 10 seconds.</div>
-
-  <table id="tbl">
-    <thead>
-      <tr>
-        <th>Name</th>
-        <th class="right">Total</th>
-        <th class="right">Through</th>
-      </tr>
-    </thead>
-    <tbody></tbody>
-  </table>
-
 <script>
   const CSV_URL =
     "https://docs.google.com/spreadsheets/d/e/2PACX-1vRE9EZ7Sjxo2rc7MskMriOvjtTYyeE_l-hMqvo2I9LFjPvjCa8CEjCFE3kXV7Xzjc4triXQbHRfoErp/pub?output=csv&gid=4700759&single=true";
 
   const REFRESH_MS = 10000;
 
-  // Safer CSV parsing for quoted values
   function parseCSV(text) {
     const rows = [];
     let row = [], cur = "", inQuotes = false;
 
     for (let i = 0; i < text.length; i++) {
-      const c = text[i];
-      const next = text[i + 1];
+      const c = text[i], next = text[i + 1];
 
       if (c === '"' && inQuotes && next === '"') { cur += '"'; i++; continue; }
       if (c === '"') { inQuotes = !inQuotes; continue; }
@@ -66,47 +33,83 @@
     return Number.isFinite(n) ? n : null;
   }
 
+  function setStatus(msg) {
+    let el = document.getElementById("status");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "status";
+      el.style.color = "#b00";
+      el.style.margin = "12px 0";
+      document.body.insertBefore(el, document.getElementById("tbl"));
+    }
+    el.textContent = msg || "";
+  }
+
   async function load() {
-    // cache-bust so viewers don't get stale data
-    const url = CSV_URL + "&_t=" + Date.now();
+    try {
+      const url = CSV_URL + "&_t=" + Date.now();
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error(`CSV fetch failed: ${res.status} ${res.statusText}`);
 
-    const res = await fetch(url, { cache: "no-store" });
-    const text = await res.text();
-    const rows = parseCSV(text);
+      const text = await res.text();
+      const rows = parseCSV(text);
 
-    if (!rows.length) return;
+      console.log("CSV rows:", rows.length);
+      console.log("Header preview:", rows[0]);
 
-    const header = rows[0].map(h => h.toLowerCase());
-    const iName = header.findIndex(h => h.includes("name"));
-    const iTotal = header.findIndex(h => h.includes("total"));
-    const iThrough = header.findIndex(h => h.includes("through"));
+      if (!rows.length) { setStatus("No data found in CSV."); return; }
 
-    const data = rows.slice(1)
-      .map(r => ({
-        name: r[iName]?.trim(),
-        total: toNumber(r[iTotal]),
-        through: toNumber(r[iThrough]),
-      }))
-      .filter(d => d.name);
+      // Try header-based mapping first
+      const header = (rows[0] || []).map(h => h.toLowerCase());
+      let iName = header.findIndex(h => h.includes("name"));
+      let iTotal = header.findIndex(h => h.includes("total"));
+      let iThrough = header.findIndex(h => h.includes("through"));
 
-    // golf leaderboard: lowest total score first
-    data.sort((a,b) => (a.total ?? 9999) - (b.total ?? 9999));
+      // Fallback if headers aren't detected:
+      // A=name (0), B=total (1), L=through (11)
+      if (iName < 0 || iTotal < 0 || iThrough < 0) {
+        console.warn("Header match failed, using fallback columns A,B,L");
+        iName = 0;
+        iTotal = 1;
+        iThrough = 11;
+      }
 
-    const tbody = document.querySelector("#tbl tbody");
-    tbody.innerHTML = "";
-    for (const d of data) {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${d.name}</td>
-        <td class="right">${d.total ?? ""}</td>
-        <td class="right">${d.through ?? ""}</td>
-      `;
-      tbody.appendChild(tr);
+      const data = rows.slice(1)
+        .map(r => ({
+          name: r[iName]?.trim(),
+          total: toNumber(r[iTotal]),
+          through: toNumber(r[iThrough]),
+        }))
+        .filter(d => d.name);
+
+      console.log("Parsed players:", data);
+
+      if (!data.length) {
+        setStatus("Loaded CSV, but no player rows were parsed. Check column positions / headers.");
+      } else {
+        setStatus("");
+      }
+
+      data.sort((a,b) => (a.total ?? 9999) - (b.total ?? 9999));
+
+      const tbody = document.querySelector("#tbl tbody");
+      tbody.innerHTML = "";
+      for (const d of data) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${d.name}</td>
+          <td class="right">${d.total ?? ""}</td>
+          <td class="right">${d.through ?? ""}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+    } catch (e) {
+      console.error(e);
+      setStatus(String(e));
     }
   }
 
   load();
   setInterval(load, REFRESH_MS);
 </script>
-</body>
-</html>
+
