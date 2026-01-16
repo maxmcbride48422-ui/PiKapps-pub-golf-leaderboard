@@ -10,10 +10,8 @@
 
     for (let i = 0; i < text.length; i++) {
       const c = text[i], next = text[i + 1];
-
       if (c === '"' && inQuotes && next === '"') { cur += '"'; i++; continue; }
       if (c === '"') { inQuotes = !inQuotes; continue; }
-
       if (c === "," && !inQuotes) { row.push(cur); cur = ""; continue; }
       if ((c === "\n" || c === "\r") && !inQuotes) {
         if (cur.length || row.length) row.push(cur);
@@ -31,6 +29,18 @@
   function toNumber(x) {
     const n = Number(String(x).trim());
     return Number.isFinite(n) ? n : null;
+  }
+
+  function findHeaderRow(rows) {
+    // Scan first 5 rows for a row that contains "names" and "total"
+    const maxScan = Math.min(rows.length, 5);
+    for (let ri = 0; ri < maxScan; ri++) {
+      const r = rows[ri].map(c => c.toLowerCase());
+      const hasName = r.some(c => c.includes("name"));
+      const hasTotal = r.some(c => c.includes("total"));
+      if (hasName && hasTotal) return ri;
+    }
+    return 0; // fallback
   }
 
   function setStatus(msg) {
@@ -53,39 +63,42 @@
 
       const text = await res.text();
       const rows = parseCSV(text);
+      if (!rows.length) { setStatus("No data in CSV."); return; }
 
-      console.log("CSV rows:", rows.length);
-      console.log("Header preview:", rows[0]);
+      const headerRowIndex = findHeaderRow(rows);
+      const header = rows[headerRowIndex].map(h => h.toLowerCase());
 
-      if (!rows.length) { setStatus("No data found in CSV."); return; }
-
-      // Try header-based mapping first
-      const header = (rows[0] || []).map(h => h.toLowerCase());
       let iName = header.findIndex(h => h.includes("name"));
       let iTotal = header.findIndex(h => h.includes("total"));
       let iThrough = header.findIndex(h => h.includes("through"));
 
-      // Fallback if headers aren't detected:
-      // A=name (0), B=total (1), L=through (11)
-      if (iName < 0 || iTotal < 0 || iThrough < 0) {
-        console.warn("Header match failed, using fallback columns A,B,L");
-        iName = 0;
-        iTotal = 1;
-        iThrough = 11;
+      // Fallback if not found (A=name, B=total, M=through)
+      if (iName < 0) iName = 0;
+      if (iTotal < 0) iTotal = 1;
+      if (iThrough < 0) iThrough = 12;
+
+      // Data starts after the header row we found
+      const dataRows = rows.slice(headerRowIndex + 1);
+
+      // If "Through" header is in L but values are in M, auto-shift
+      // Detect by checking first non-empty player row
+      const first = dataRows.find(r => (r[iName] ?? "").trim() !== "");
+      if (first) {
+        const throughHere = toNumber(first[iThrough]);
+        const throughNext = toNumber(first[iThrough + 1]);
+        if (throughHere === null && throughNext !== null) iThrough = iThrough + 1;
       }
 
-      const data = rows.slice(1)
+      const data = dataRows
         .map(r => ({
-          name: r[iName]?.trim(),
+          name: (r[iName] ?? "").trim(),
           total: toNumber(r[iTotal]),
           through: toNumber(r[iThrough]),
         }))
-        .filter(d => d.name);
-
-      console.log("Parsed players:", data);
+        .filter(d => d.name && d.name.toLowerCase() !== "names"); // skip label row
 
       if (!data.length) {
-        setStatus("Loaded CSV, but no player rows were parsed. Check column positions / headers.");
+        setStatus("Loaded CSV, but no player rows parsed. (Sheet header/layout mismatch.)");
       } else {
         setStatus("");
       }
@@ -104,7 +117,6 @@
         tbody.appendChild(tr);
       }
     } catch (e) {
-      console.error(e);
       setStatus(String(e));
     }
   }
@@ -112,4 +124,3 @@
   load();
   setInterval(load, REFRESH_MS);
 </script>
-
