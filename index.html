@@ -1,0 +1,112 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pub Golf Leaderboard</title>
+  <style>
+    body { font-family: system-ui, Arial; margin: 24px; }
+    h1 { margin: 0 0 8px; }
+    .muted { color: #666; font-size: 14px; margin-bottom: 16px; }
+    table { border-collapse: collapse; width: 100%; max-width: 720px; }
+    th, td { padding: 10px 12px; border-bottom: 1px solid #eee; text-align: left; }
+    th { background: #fafafa; position: sticky; top: 0; }
+    .right { text-align: right; }
+  </style>
+</head>
+<body>
+  <h1>PiKapps Pub Golf Leaderboard</h1>
+  <div class="muted">Auto-updates from Google Sheets every 10 seconds.</div>
+
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th class="right">Total</th>
+        <th class="right">Through</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+<script>
+  const CSV_URL =
+    "https://docs.google.com/spreadsheets/d/e/2PACX-1vRE9EZ7Sjxo2rc7MskMriOvjtTYyeE_l-hMqvo2I9LFjPvjCa8CEjCFE3kXV7Xzjc4triXQbHRfoErp/pub?output=csv&gid=4700759&single=true";
+
+  const REFRESH_MS = 10000;
+
+  // Safer CSV parsing for quoted values
+  function parseCSV(text) {
+    const rows = [];
+    let row = [], cur = "", inQuotes = false;
+
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      const next = text[i + 1];
+
+      if (c === '"' && inQuotes && next === '"') { cur += '"'; i++; continue; }
+      if (c === '"') { inQuotes = !inQuotes; continue; }
+
+      if (c === "," && !inQuotes) { row.push(cur); cur = ""; continue; }
+      if ((c === "\n" || c === "\r") && !inQuotes) {
+        if (cur.length || row.length) row.push(cur);
+        cur = "";
+        if (row.length) rows.push(row);
+        row = [];
+        continue;
+      }
+      cur += c;
+    }
+    if (cur.length || row.length) { row.push(cur); rows.push(row); }
+    return rows.map(r => r.map(x => (x ?? "").trim()));
+  }
+
+  function toNumber(x) {
+    const n = Number(String(x).trim());
+    return Number.isFinite(n) ? n : null;
+  }
+
+  async function load() {
+    // cache-bust so viewers don't get stale data
+    const url = CSV_URL + "&_t=" + Date.now();
+
+    const res = await fetch(url, { cache: "no-store" });
+    const text = await res.text();
+    const rows = parseCSV(text);
+
+    if (!rows.length) return;
+
+    const header = rows[0].map(h => h.toLowerCase());
+    const iName = header.findIndex(h => h.includes("name"));
+    const iTotal = header.findIndex(h => h.includes("total"));
+    const iThrough = header.findIndex(h => h.includes("through"));
+
+    const data = rows.slice(1)
+      .map(r => ({
+        name: r[iName]?.trim(),
+        total: toNumber(r[iTotal]),
+        through: toNumber(r[iThrough]),
+      }))
+      .filter(d => d.name);
+
+    // golf leaderboard: lowest total score first
+    data.sort((a,b) => (a.total ?? 9999) - (b.total ?? 9999));
+
+    const tbody = document.querySelector("#tbl tbody");
+    tbody.innerHTML = "";
+    for (const d of data) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${d.name}</td>
+        <td class="right">${d.total ?? ""}</td>
+        <td class="right">${d.through ?? ""}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+  }
+
+  load();
+  setInterval(load, REFRESH_MS);
+</script>
+</body>
+</html>
